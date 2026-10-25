@@ -21,8 +21,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - run: npm ci --no-audit --no-fund
       - run: npm test
       - run: npm run build
+      - name: Check WebRTC between two browsers
+        run: npm run test:remote
+        timeout-minutes: 3
+      - name: Check public signaling service
+        run: npm run test:remote
+        env:
+          REMOTE_PUBLIC: '1'
+        timeout-minutes: 3
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -6,6 +6,15 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js",
+    "test:remote": "node scripts/check-remote.mjs"
+  },
+  "dependencies": {
+    "peerjs": "1.5.5",
+    "qrcode-generator": "2.0.4"
+  },
+  "devDependencies": {
+    "peer": "1.0.2",
+    "playwright": "1.64.1"
   }
 }

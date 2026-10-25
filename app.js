@@ -5,6 +5,7 @@ import { WallHunt, drawWallScene } from './wall.js';
 import { drawInsect, isInsect } from './insects.js';
 import { ManualHunt } from './manual.js';
 import { drawString } from './string.js';
+import { initRemote } from './remote.js';
 
 const $ = id => document.getElementById(id);
 const home = $('home'), play = $('play');
@@ -22,6 +23,7 @@ function createHunt(width, height) {
 let selected = 'mouse', speed = 2, sceneChoice = 'meadow', stageChoice = 'flat', sizeChoice = 1, contrastChoice = true, controlChoice = 'auto', active = false, paused = false;
 let game, previewGame, audio, wakeLock, last = performance.now(), elapsed = 0, nextBreak = 180, toastTimer;
 let holdTimer, holdPointer, dragPointer, previewPointer;
+let remoteApi, remoteReceiver = false, controllerVisible = false;
 try {
   const saved = JSON.parse(localStorage.getItem('pawplay-preferences') || '{}');
   if (Object.hasOwn(names, saved.prey)) selected = saved.prey;
@@ -60,12 +62,12 @@ function drawPrey(c, hunt) {
   c.translate(hunt.x, hunt.y);
   if (hunt.prey === 'string') {
     if (!hunt.stringTail) c.scale(hunt.scale, hunt.scale);
-    drawString(c, hunt, { night: !hunt.thumbnail && sceneChoice === 'night' }); c.restore(); return;
+    drawString(c, hunt, { night: hunt.night ?? (!hunt.thumbnail && sceneChoice === 'night') }); c.restore(); return;
   }
   c.rotate(hunt.angle);
   c.scale(hunt.scale * (hunt.size ?? sizeChoice), hunt.scale * (hunt.size ?? sizeChoice));
   if (isInsect(hunt.prey)) {
-    drawInsect(c, hunt.prey, { time: hunt.time, stride: hunt.stride || 0, night: !hunt.thumbnail && sceneChoice === 'night', contrast: contrastChoice });
+    drawInsect(c, hunt.prey, { time: hunt.time, stride: hunt.stride || 0, night: hunt.night ?? (!hunt.thumbnail && sceneChoice === 'night'), contrast: hunt.contrast ?? contrastChoice });
     c.restore(); return;
   }
   const wiggle = Math.sin(hunt.time * 11);
@@ -137,7 +139,7 @@ function drawRipples(c, hunt) {
 function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`; }
 function frame(now) {
   const dt = Math.min(Math.max((now - last) / 1000, 0), .05); last = now;
-  if (!document.hidden) {
+  if (!document.hidden && !controllerVisible) {
     if (!active) { previewGame.step(dt); scene(preview, previewGame, true); }
     else if (!paused) {
       game.step(dt); elapsed += dt; scene(canvas, game);
@@ -249,25 +251,26 @@ $('start').addEventListener('click', () => {
   $('hide-prey').setAttribute('aria-pressed', 'false'); $('hide-prey').textContent = 'かくす';
   $('fullscreen').hidden = !game.manual || !document.documentElement.requestFullscreen;
   dragPointer = undefined;
+  document.querySelector('#manual-tools>span').textContent = remoteReceiver ? 'iPhoneで操作中' : '指で操作中';
   $('score-display').hidden = !runner; $('pass-count').hidden = !runner; $('pause-score-stat').hidden = !runner;
   $('score-value').textContent = '0'; $('pass-count').textContent = '0 通過';
   $('stage-badge').textContent = stageNames[stageChoice];
   document.querySelector('.session-stats').classList.toggle('has-score', runner);
-  scene(canvas, game); toast(game.manual ? '指でなぞると獲物が動きます。指を離すとストップ' : stageChoice === 'runner' ? '通り過ぎる前にタッチ！ 遠くでキャッチすると高得点' : '獲物をタッチしてみよう', 3500);
+  scene(canvas, game); toast(remoteReceiver ? 'iPhoneで獲物を動かせます' : game.manual ? '指でなぞると獲物が動きます。指を離すとストップ' : stageChoice === 'runner' ? '通り過ぎる前にタッチ！ 遠くでキャッチすると高得点' : '獲物をタッチしてみよう', 3500);
   document.body.style.overflow = 'hidden'; keepAwake(); $('pause').focus({ preventScroll: true });
 });
 canvas.addEventListener('pointerdown', event => {
-  if (!active || paused || event.isPrimary === false) return;
+  if (!active || paused || remoteReceiver || event.isPrimary === false) return;
   event.preventDefault();
   if (game.manual) { dragPointer = event.pointerId; canvas.setPointerCapture(event.pointerId); pointFromEvent(canvas, game, event); return; }
   const rect = canvas.getBoundingClientRect();
   if (game.tap(event.clientX - rect.left, event.clientY - rect.top)) { $('catch-count').textContent = `${game.catches} キャッチ`; if (game.mode !== 'flat') $('score-value').textContent = game.score; chime(); }
 });
-canvas.addEventListener('pointermove', event => { if (active && !paused && game.manual && event.pointerId === dragPointer) { event.preventDefault(); pointFromEvent(canvas, game, event); } });
+canvas.addEventListener('pointermove', event => { if (active && !paused && !remoteReceiver && game.manual && event.pointerId === dragPointer) { event.preventDefault(); pointFromEvent(canvas, game, event); } });
 for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(type, () => { dragPointer = undefined; });
 $('hide-prey').addEventListener('click', () => {
   if (!active || paused || !game.manual) return;
-  game.hide(game.visible); $('hide-prey').setAttribute('aria-pressed', String(!game.visible)); $('hide-prey').textContent = game.visible ? 'かくす' : '出す';
+  game.hide(game.visible); $('hide-prey').setAttribute('aria-pressed', String(!game.visible)); $('hide-prey').textContent = game.visible ? 'かくす' : '出す'; remoteApi?.sendState();
 });
 $('fullscreen').addEventListener('click', async () => {
   try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen(); else await document.exitFullscreen(); }
@@ -281,7 +284,7 @@ function pause(isBreak = false) {
   $('pause-catches').parentElement.hidden = !!game.manual;
   document.querySelector('.session-stats').classList.toggle('manual-stats', !!game.manual);
   $('pause-catches').textContent = game.catches; $('pause-score').textContent = game.score || 0; $('pause-time').textContent = formatTime(elapsed);
-  $('pause-panel').hidden = false; $('pause').disabled = true; $('resume').focus({ preventScroll: true });
+  $('pause-panel').hidden = false; $('pause').disabled = true; $('resume').focus({ preventScroll: true }); remoteApi?.sendState();
 }
 function cancelHold() { clearTimeout(holdTimer); holdTimer = undefined; holdPointer = undefined; $('pause').classList.remove('holding'); }
 $('pause').addEventListener('pointerdown', event => {
@@ -295,10 +298,11 @@ $('pause').addEventListener('pointercancel', cancelHold);
 $('pause').addEventListener('lostpointercapture', cancelHold);
 $('pause').addEventListener('contextmenu', event => event.preventDefault());
 $('pause').addEventListener('click', event => { if (event.detail === 0 && !event.pointerType) pause(); });
-$('resume').addEventListener('click', () => { paused = false; $('pause-panel').hidden = true; $('pause').disabled = false; last = performance.now(); keepAwake(); $('pause').focus({ preventScroll: true }); });
+function resumeGame() { if (document.hidden) return; paused = false; $('pause-panel').hidden = true; $('pause').disabled = false; last = performance.now(); keepAwake(); $('pause').focus({ preventScroll: true }); remoteApi?.sendState(); }
+$('resume').addEventListener('click', resumeGame);
 $('exit').addEventListener('click', () => {
   dragPointer = undefined; cancelHold(); active = false; paused = false; releaseWakeLock(); play.hidden = true; $('pause-panel').hidden = true; $('pause').disabled = false;
-  home.hidden = false; document.querySelector('.brand').hidden = false; document.body.style.overflow = ''; fit(preview, previewGame); $('start').focus({ preventScroll: true });
+  home.hidden = false; document.querySelector('.brand').hidden = false; document.body.style.overflow = ''; remoteApi?.endHost(); refreshSettings(); fit(preview, previewGame); $('start').focus({ preventScroll: true });
 });
 $('mirror-help').addEventListener('click', () => $('mirror-dialog').showModal());
 $('mirror-close').addEventListener('click', () => $('mirror-dialog').close());
@@ -317,3 +321,33 @@ document.addEventListener('keydown', event => {
   }
 });
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('./sw.js').catch(() => { /* Optional offline installation; online gameplay remains available. */ });
+
+remoteApi = initRemote({
+  getState: () => ({ settings: { prey: selected, stage: stageChoice === 'runner' ? 'flat' : stageChoice, scene: sceneChoice, size: sizeChoice, contrast: contrastChoice }, paused, visible: game?.visible !== false }),
+  onHostConnected() {
+    if (remoteReceiver && active) return;
+    controlChoice = 'manual'; if (stageChoice === 'runner') stageChoice = 'flat';
+    refreshSettings(); remoteReceiver = true; $('start').click();
+  },
+  onControl(data) {
+    if (!remoteReceiver || !active || !game.manual) return;
+    if (data.type === 'move' && !paused) game.point(data.u, data.vPos);
+    if (data.type === 'hide') { game.hide(data.hidden); $('hide-prey').setAttribute('aria-pressed', String(data.hidden)); $('hide-prey').textContent = data.hidden ? '出す' : 'かくす'; }
+    if (data.type === 'pause') { if (data.paused) pause(); else if (paused) resumeGame(); }
+    if (data.type === 'settings') {
+      const previous = game;
+      selected = data.settings.prey; stageChoice = data.settings.stage; sceneChoice = data.settings.scene; sizeChoice = data.settings.size; contrastChoice = data.settings.contrast;
+      game = createHunt(previous.width, previous.height); game.x = previous.x; game.y = previous.y;
+      game.point(previous.u, previous.v); game.hide(!previous.visible); game.stringTail?.reset(game.x, game.y);
+      play.classList.toggle('night-play', sceneChoice === 'night'); $('stage-badge').textContent = stageNames[stageChoice];
+    }
+    if (paused) scene(canvas, game);
+  },
+  onHostDisconnected() { if (remoteReceiver && active) pause(); },
+  onHostEnd() { const wasReceiver = remoteReceiver; remoteReceiver = false; if (wasReceiver && active) pause(); },
+  onControllerView(value) {
+    controllerVisible = value; if (value && active) pause();
+    document.querySelector('main').inert = value; document.body.style.overflow = value || active ? 'hidden' : '';
+  },
+  drawPrey,
+});

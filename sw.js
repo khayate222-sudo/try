@@ -1,5 +1,5 @@
-const CACHE = 'pawplay-v6';
-const ASSETS = ['./', './index.html', './style.css', './app.js', './game.js', './runner.js', './world.js', './insects.js', './wall.js', './manual.js', './string.js', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './manifest.webmanifest'];
+const CACHE = 'pawplay-v7';
+const ASSETS = ['./', './index.html', './style.css', './app.js', './game.js', './runner.js', './world.js', './insects.js', './wall.js', './manual.js', './string.js', './remote.js', './peer-session.js', './remote-protocol.js', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './manifest.webmanifest'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
