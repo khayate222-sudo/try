@@ -1,10 +1,13 @@
+import { OrganicMotion, isInsect, insectRadius } from './insects.js';
+
 // A perspective camera moving forward. World depth decreases toward the viewer.
 export class RunnerHunt {
-  constructor(width, height, { prey = 'mouse', speed = 2, random = Math.random } = {}) {
+  constructor(width, height, { prey = 'mouse', speed = 2, size = 1, random = Math.random } = {}) {
     this.width = width;
     this.height = height;
     this.prey = prey;
     this.speed = speed;
+    this.size = size;
     this.random = random;
     this.mode = 'runner';
     this.time = 0;
@@ -20,20 +23,21 @@ export class RunnerHunt {
   between(a, b) { return a + this.random() * (b - a); }
   spawn(z = 15) {
     if (this.targets.length >= 6) return;
-    this.targets.push({ z, phase: this.between(0, Math.PI * 2), sway: this.between(1.1, 2), bias: this.between(-0.2, 0.2), lift: this.between(-0.2, 0.2) });
+    this.targets.push({ z, lateral: this.between(-.2, .2), vertical: this.between(.1, .6), motion: new OrganicMotion({ prey: this.prey, random: this.random }), phase: this.between(0, Math.PI * 2), sway: this.between(1.1, 2), bias: this.between(-0.2, 0.2), lift: this.between(-0.2, 0.2) });
   }
   resize(width, height) { this.width = width; this.height = height; }
   project(target) {
     const depth = target.z + 0.6;
-    const lateral = target.bias + Math.sin(this.time * target.sway + target.phase) * 0.55;
-    const vertical = 0.35 + target.lift + Math.sin(this.time * target.sway * 1.3 + target.phase * 1.7) * 0.65;
+    const lateral = isInsect(this.prey) ? target.lateral : target.bias + Math.sin(this.time * target.sway + target.phase) * 0.55;
+    const vertical = isInsect(this.prey) ? target.vertical : 0.35 + target.lift + Math.sin(this.time * target.sway * 1.3 + target.phase * 1.7) * 0.65;
     const scale = 2.6 / depth;
     return {
       x: this.width * (0.5 + lateral * 0.8 / depth),
       y: this.height * (0.36 + vertical * 0.65 / depth),
       scale,
-      radius: Math.max(18, 27 * scale),
-      angle: Math.sin(this.time * target.sway + target.phase) * 0.45 + Math.PI / 2,
+      size: this.size, stride: target.motion.distance * 160,
+      radius: isInsect(this.prey) ? insectRadius(this.prey, this.size, scale) : Math.max(18, 27 * scale * this.size),
+      angle: (isInsect(this.prey) ? Math.sin(target.motion.angle) * .6 : Math.sin(this.time * target.sway + target.phase) * .45) + Math.PI / 2,
     };
   }
   step(dt) {
@@ -41,7 +45,14 @@ export class RunnerHunt {
     this.time += dt;
     const travel = [2.5, 3.8, 5.6][this.speed - 1] * dt;
     this.distance += travel;
-    for (const target of this.targets) target.z -= travel;
+    for (const target of this.targets) {
+      target.z -= travel;
+      if (isInsect(this.prey)) {
+        target.motion.prey = this.prey;
+        const p = target.motion.step(dt, { x: target.lateral, y: target.vertical }, { left: -.75, right: .75, top: -.5, bottom: 1.2 }, this.prey === 'gnat' ? .9 : .55);
+        target.lateral = p.x; target.vertical = p.y;
+      }
+    }
     this.targets = this.targets.filter(target => {
       if (target.z < 0.9) { this.missed++; return false; }
       return true;

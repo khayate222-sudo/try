@@ -1,16 +1,21 @@
 import { Hunt } from './game.js';
 import { RunnerHunt } from './runner.js';
 import { drawRunnerScene } from './world.js';
+import { WallHunt, drawWallScene } from './wall.js';
+import { drawInsect, isInsect } from './insects.js';
 
 const $ = id => document.getElementById(id);
 const home = $('home'), play = $('play');
 const preview = $('preview-canvas'), canvas = $('game-canvas');
-const names = { mouse: 'ねずみ', bug: 'てんとうむし', feather: 'はね' };
-const descriptions = { mouse: 'ちょこちょこ、かくれんぼ', bug: 'すいすい、きまぐれに', feather: 'ゆらゆら、ひらひら' };
+const names = { mouse: 'ねずみ', bug: 'てんとうむし', feather: 'はね', ant: '小さなアリ', gnat: '小バエ', spider: '蜘蛛' };
+const descriptions = { mouse: 'ちょこちょこ、かくれんぼ', bug: 'すいすい、きまぐれに', feather: 'ゆらゆら、ひらひら', ant: 'ちょろちょろ、急に方向転換', gnat: '小さく、すばしっこく', spider: '8本の脚で、すたすた' };
 const speeds = ['ゆったり', 'すばやく', '猛ダッシュ'];
-const stageNames = { flat: '平面の狩り場', runner: '奥行きダッシュ' };
-function createHunt(width, height) { return stageChoice === 'runner' ? new RunnerHunt(width, height, { prey: selected, speed }) : new Hunt(width, height, { prey: selected, speed }); }
-let selected = 'mouse', speed = 2, sceneChoice = 'meadow', stageChoice = 'flat', active = false, paused = false;
+const stageNames = { flat: '平面の狩り場', runner: '奥行きダッシュ', wall: '壁のぼり' };
+function createHunt(width, height) {
+  const Engine = stageChoice === 'wall' ? WallHunt : stageChoice === 'runner' ? RunnerHunt : Hunt;
+  return new Engine(width, height, { prey: selected, speed, size: sizeChoice });
+}
+let selected = 'mouse', speed = 2, sceneChoice = 'meadow', stageChoice = 'flat', sizeChoice = 1, contrastChoice = true, active = false, paused = false;
 let game, previewGame, audio, wakeLock, last = performance.now(), elapsed = 0, nextBreak = 180, toastTimer;
 let holdTimer, holdPointer;
 try {
@@ -18,7 +23,10 @@ try {
   if (Object.hasOwn(names, saved.prey)) selected = saved.prey;
   if ([1, 2, 3].includes(saved.speed)) speed = saved.speed;
   if (['meadow', 'night'].includes(saved.scene)) sceneChoice = saved.scene;
-  if (['flat', 'runner'].includes(saved.stage)) stageChoice = saved.stage;
+  if (['flat', 'runner', 'wall'].includes(saved.stage)) stageChoice = saved.stage;
+  if ([.6, 1, 1.45].includes(saved.size)) sizeChoice = saved.size;
+  if (typeof saved.contrast === 'boolean') contrastChoice = saved.contrast;
+  if (stageChoice === 'wall' && !isInsect(selected)) selected = 'spider';
   $('sound').checked = saved.sound === true;
 } catch { /* Settings are optional when browser storage is unavailable. */ }
 
@@ -45,7 +53,11 @@ function drawPrey(c, hunt) {
   c.save();
   c.translate(hunt.x, hunt.y);
   c.rotate(hunt.angle);
-  c.scale(hunt.scale, hunt.scale);
+  c.scale(hunt.scale * (hunt.size ?? sizeChoice), hunt.scale * (hunt.size ?? sizeChoice));
+  if (isInsect(hunt.prey)) {
+    drawInsect(c, hunt.prey, { time: hunt.time, stride: hunt.stride || 0, night: !hunt.thumbnail && sceneChoice === 'night', contrast: contrastChoice });
+    c.restore(); return;
+  }
   const wiggle = Math.sin(hunt.time * 11);
   if (hunt.prey === 'mouse') {
     c.strokeStyle = '#b19b86'; c.lineWidth = 2.5; c.lineCap = 'round';
@@ -58,12 +70,6 @@ function drawPrey(c, hunt) {
     ellipse(c, 20, -4, 1.6, 1.6, '#303c32'); ellipse(c, 26, 0, 2.3, 2, '#b79b88');
     c.strokeStyle = '#6d7a6355'; c.lineWidth = .8;
     for (const side of [-1, 1]) { c.beginPath(); c.moveTo(22, side * 3); c.lineTo(32, side * 9); c.moveTo(22, side * 3); c.lineTo(33, side * 4); c.stroke(); }
-  } else if (hunt.prey === 'bug') {
-    c.strokeStyle = '#4a5841'; c.lineWidth = 1.6;
-    for (const i of [-1, 0, 1]) { c.beginPath(); c.moveTo(i * 8, -7); c.lineTo(i * 9 - 3, -15 - wiggle); c.moveTo(i * 8, 7); c.lineTo(i * 9 - 3, 15 + wiggle); c.stroke(); }
-    ellipse(c, 13, 0, 8, 8, '#3c4b39'); ellipse(c, -2, 0, 17, 13, '#b96649');
-    c.strokeStyle = '#704a36'; c.beginPath(); c.moveTo(-18, 0); c.lineTo(12, 0); c.stroke();
-    for (const x of [-9, 3]) for (const y of [-6, 6]) ellipse(c, x, y, 2.5, 2.5, '#494c38');
   } else {
     c.rotate(Math.sin(hunt.time * 2) * .2);
     c.fillStyle = '#f4f1d8'; c.beginPath(); c.moveTo(-30, 0); c.bezierCurveTo(-8, -28, 30, -16, 33, -5); c.bezierCurveTo(19, 12, -6, 20, -30, 0); c.fill();
@@ -77,6 +83,7 @@ function scene(surface, hunt, isPreview = false) {
   const c = surface.getContext('2d');
   const w = hunt.width, h = hunt.height;
   c.clearRect(0, 0, w, h);
+  if (hunt.mode === 'wall') { drawWallScene(c, hunt, { night: sceneChoice === 'night', drawPrey }); drawRipples(c, hunt); return; }
   if (hunt.mode === 'runner') {
     drawRunnerScene(c, hunt, { night: sceneChoice === 'night', drawPrey });
     drawRipples(c, hunt);
@@ -125,7 +132,7 @@ function frame(now) {
     else if (!paused) {
       game.step(dt); elapsed += dt; scene(canvas, game);
       $('session-time').textContent = formatTime(elapsed);
-      if (game.mode === 'runner') $('pass-count').textContent = `${game.missed} 通過`;
+      if (game.mode !== 'flat') $('pass-count').textContent = `${game.missed} 通過`;
       if (elapsed >= nextBreak) { nextBreak += 180; pause(true); }
     }
   }
@@ -134,33 +141,46 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 function refreshSettings() {
+  if (stageChoice === 'wall' && !isInsect(selected)) selected = 'spider';
+  home.classList.toggle('wall-selected', stageChoice === 'wall');
   if ((previewGame.mode || 'flat') !== stageChoice) { const rect = preview.getBoundingClientRect(); previewGame = createHunt(rect.width, rect.height); }
   document.querySelectorAll('[data-stage]').forEach(b => { const chosen = b.dataset.stage === stageChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
   $('stage-caption').textContent = stageNames[stageChoice];
-  $('stage-note').textContent = stageChoice === 'runner' ? '奥から迫る獲物を、通り過ぎる前にタッチ。遠くでつかまえると高得点！' : '画面を走りまわる獲物を追いかけよう。急に止まったり、かくれたり。';
+  $('stage-note').textContent = stageChoice === 'runner' ? '奥から迫る獲物を、通り過ぎる前にタッチ。遠くでつかまえると高得点！' : stageChoice === 'wall' ? '蜘蛛や小さな虫が、壁を不規則にのぼる。近くを触ると、さっと逃げる。' : '急に走る、止まる、くるっと曲がる。小さな虫の気まぐれを追いかけよう。';
+  preview.parentElement.classList.toggle('wall-preview', stageChoice === 'wall');
   preview.parentElement.classList.toggle('runner-preview', stageChoice === 'runner');
   $('preview-instruction').textContent = stageChoice === 'runner' ? '奥から、こっちへ！' : 'あ、うごいた。';
-  previewGame.prey = selected; previewGame.speed = speed;
-  document.querySelectorAll('.friend').forEach(b => { const chosen = b.dataset.prey === selected; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
+  previewGame.prey = selected; previewGame.speed = speed; previewGame.size = sizeChoice;
+  document.querySelectorAll('.friend').forEach(b => { const chosen = b.dataset.prey === selected; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); b.disabled = stageChoice === 'wall' && !isInsect(b.dataset.prey); });
   document.querySelectorAll('.scene-option').forEach(b => { const chosen = b.dataset.scene === sceneChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
   $('speed').value = speed; $('speed').setAttribute('aria-valuetext', speeds[speed - 1]);
   $('speed-label').textContent = speeds[speed - 1];
   $('friend-caption').textContent = names[selected];
   $('prey-tag').textContent = descriptions[selected];
-  $('scene-name').textContent = `${stageChoice === 'runner' ? '02' : '01'} / ${stageNames[stageChoice]}`;
+  $('scene-name').textContent = `${{ flat: '01', runner: '02', wall: '03' }[stageChoice]} / ${stageNames[stageChoice]}`;
   preview.parentElement.classList.toggle('night-preview', sceneChoice === 'night');
   $('launch-prey').textContent = `${names[selected]}とあそぶ`;
-  $('launch-detail').textContent = `${stageChoice === 'runner' ? '奥行き' : '平面'} · ${speeds[speed - 1]} · ${$('sound').checked ? '音あり' : '音なし'}`;
+  $('launch-detail').textContent = `${stageChoice === 'runner' ? '奥行き' : stageChoice === 'wall' ? '壁のぼり' : '平面'} · ${speeds[speed - 1]} · ${$('sound').checked ? '音あり' : '音なし'}`;
+  for (const b of document.querySelectorAll('[data-size]')) { const chosen = Number(b.dataset.size) === sizeChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); }
+  for (const b of document.querySelectorAll('[data-contrast]')) { const chosen = (b.dataset.contrast === 'high') === contrastChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); }
+  $('contrast-description').textContent = contrastChoice ? sceneChoice === 'night' ? '暗い背景に、淡い色の虫。小さくてもくっきり。' : '明るい背景に、黒い虫。小さくてもくっきり。' : '茶色の体で、背景に少しなじむ見え方。';
+  document.querySelector('[data-scene=meadow] strong').textContent = stageChoice === 'wall' ? '明るい壁' : 'こもれびの草原';
+  document.querySelector('[data-scene=night] strong').textContent = stageChoice === 'wall' ? '暗い壁' : '月あかりの庭';
+  renderThumbnails();
   $('sound-description').textContent = $('sound').checked ? 'そっと音をならす' : '静かにあそぶ';
-  try { localStorage.setItem('pawplay-preferences', JSON.stringify({ prey: selected, speed, scene: sceneChoice, stage: stageChoice, sound: $('sound').checked })); } catch { /* Gameplay works without storage. */ }
+  try { localStorage.setItem('pawplay-preferences', JSON.stringify({ prey: selected, speed, scene: sceneChoice, stage: stageChoice, size: sizeChoice, contrast: contrastChoice, sound: $('sound').checked })); } catch { /* Gameplay works without storage. */ }
 }
 refreshSettings();
 // Render the same custom illustrations in the cards and in the game.
-for (const thumbnail of document.querySelectorAll('[data-drawing]')) {
-  const c = thumbnail.getContext('2d');
-  c.scale(1.3, 1.3);
-  drawPrey(c, { x: 57, y: 39, angle: -.3, scale: 1, time: 0, prey: thumbnail.dataset.drawing });
+function renderThumbnails() {
+  for (const thumbnail of document.querySelectorAll('[data-drawing]')) {
+    const c = thumbnail.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, thumbnail.width, thumbnail.height);
+    c.scale(1.3, 1.3);
+    drawPrey(c, { x: 57, y: 39, angle: -.3, scale: ['ant', 'gnat'].includes(thumbnail.dataset.drawing) ? 1.8 : 1, size: 1, thumbnail: true, time: 0, prey: thumbnail.dataset.drawing });
+  }
 }
+document.querySelectorAll('[data-size]').forEach(b => b.addEventListener('click', () => { sizeChoice = Number(b.dataset.size); refreshSettings(); }));
+document.querySelectorAll('[data-contrast]').forEach(b => b.addEventListener('click', () => { contrastChoice = b.dataset.contrast === 'high'; refreshSettings(); }));
 document.querySelectorAll('[data-stage]').forEach(button => button.addEventListener('click', () => { stageChoice = button.dataset.stage; refreshSettings(); }));
 document.querySelectorAll('.friend').forEach(button => button.addEventListener('click', () => { selected = button.dataset.prey; refreshSettings(); }));
 document.querySelectorAll('.scene-option').forEach(button => button.addEventListener('click', () => { sceneChoice = button.dataset.scene; refreshSettings(); }));
@@ -202,7 +222,7 @@ $('start').addEventListener('click', () => {
   play.classList.toggle('night-play', sceneChoice === 'night');
   $('pause-panel').hidden = true; $('pause').disabled = false; $('catch-count').textContent = '0 キャッチ'; $('session-time').textContent = '0:00';
   const rect = fit(canvas); game = createHunt(rect.width, rect.height);
-  const runner = stageChoice === 'runner';
+  const runner = stageChoice !== 'flat';
   $('score-display').hidden = !runner; $('pass-count').hidden = !runner; $('pause-score-stat').hidden = !runner;
   $('score-value').textContent = '0'; $('pass-count').textContent = '0 通過';
   $('stage-badge').textContent = stageNames[stageChoice];
@@ -214,7 +234,7 @@ canvas.addEventListener('pointerdown', event => {
   if (!active || paused || event.isPrimary === false) return;
   event.preventDefault();
   const rect = canvas.getBoundingClientRect();
-  if (game.tap(event.clientX - rect.left, event.clientY - rect.top)) { $('catch-count').textContent = `${game.catches} キャッチ`; if (game.mode === 'runner') $('score-value').textContent = game.score; chime(); }
+  if (game.tap(event.clientX - rect.left, event.clientY - rect.top)) { $('catch-count').textContent = `${game.catches} キャッチ`; if (game.mode !== 'flat') $('score-value').textContent = game.score; chime(); }
 });
 function pause(isBreak = false) {
   if (!active || paused) return;

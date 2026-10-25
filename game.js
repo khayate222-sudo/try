@@ -1,9 +1,13 @@
+import { OrganicMotion, isInsect, insectRadius } from './insects.js';
+
 export class Hunt {
-  constructor(width, height, { prey = 'mouse', speed = 2, random = Math.random } = {}) {
+  constructor(width, height, { prey = 'mouse', speed = 2, size = 1, random = Math.random } = {}) {
     this.mode = 'flat';
     this.random = random;
     this.prey = prey;
     this.speed = speed;
+    this.size = size;
+    this.stride = 0;
     this.width = width;
     this.height = height;
     this.x = width / 2;
@@ -50,7 +54,13 @@ export class Hunt {
         this.pickTarget();
       }
     }
-    if (this.phase === 'moving') {
+    if (this.phase === 'moving' && isInsect(this.prey)) {
+      if (!this.motion || this.motion.prey !== this.prey) this.motion = new OrganicMotion({ prey: this.prey, random: this.random });
+      const b = this.bounds();
+      const base = { bug: 205, ant: 165, gnat: 235, spider: 225 }[this.prey];
+      Object.assign(this, this.motion.step(dt, this, { left: b.x, right: this.width - b.x, top: b.y, bottom: this.height - b.y }, base * [0.8, 1.35, 2.1][this.speed - 1]));
+      this.stride = this.motion.distance;
+    } else if (this.phase === 'moving') {
       const dx = this.targetX - this.x, dy = this.targetY - this.y;
       const dist = Math.hypot(dx, dy);
       if (dist < 10) this.pickTarget();
@@ -69,7 +79,7 @@ export class Hunt {
     this.ripples = this.ripples.map(r => ({ ...r, life: r.life - dt })).filter(r => r.life > 0);
   }
   tap(x, y) {
-    const hit = this.phase !== 'hidden' && this.phase !== 'caught' && this.scale > 0.5 && Math.hypot(x - this.x, y - this.y) < 45;
+    const hit = this.phase !== 'hidden' && this.phase !== 'caught' && this.scale > 0.5 && Math.hypot(x - this.x, y - this.y) < (isInsect(this.prey) ? insectRadius(this.prey, this.size) : 45 * this.size);
     this.ripples.push({ x, y, life: 0.7, hit });
     if (hit) {
       this.catches++;
@@ -79,7 +89,9 @@ export class Hunt {
       this.phase = 'moving';
       this.remaining = 1.5;
       this.pickTarget();
+      if (this.motion && isInsect(this.prey)) this.motion.escape(this.x, this.y, x, y);
     }
+    this.ripples = this.ripples.slice(-30);
     return hit;
   }
 }
