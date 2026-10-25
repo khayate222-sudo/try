@@ -1,5 +1,5 @@
-const CACHE = 'pawplay-v2';
-const ASSETS = ['./', './index.html', './style.css', './app.js', './game.js', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './manifest.webmanifest'];
+const CACHE = 'pawplay-v3';
+const ASSETS = ['./', './index.html', './style.css', './app.js', './game.js', './runner.js', './world.js', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './manifest.webmanifest'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });

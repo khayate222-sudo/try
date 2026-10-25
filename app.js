@@ -1,12 +1,16 @@
 import { Hunt } from './game.js';
+import { RunnerHunt } from './runner.js';
+import { drawRunnerScene } from './world.js';
 
 const $ = id => document.getElementById(id);
 const home = $('home'), play = $('play');
 const preview = $('preview-canvas'), canvas = $('game-canvas');
 const names = { mouse: 'ねずみ', bug: 'てんとうむし', feather: 'はね' };
 const descriptions = { mouse: 'ちょこちょこ、かくれんぼ', bug: 'すいすい、きまぐれに', feather: 'ゆらゆら、ひらひら' };
-const speeds = ['のんびり', 'ふつう', 'すばやく'];
-let selected = 'mouse', speed = 2, sceneChoice = 'meadow', active = false, paused = false;
+const speeds = ['ゆったり', 'すばやく', '猛ダッシュ'];
+const stageNames = { flat: '平面の狩り場', runner: '奥行きダッシュ' };
+function createHunt(width, height) { return stageChoice === 'runner' ? new RunnerHunt(width, height, { prey: selected, speed }) : new Hunt(width, height, { prey: selected, speed }); }
+let selected = 'mouse', speed = 2, sceneChoice = 'meadow', stageChoice = 'flat', active = false, paused = false;
 let game, previewGame, audio, wakeLock, last = performance.now(), elapsed = 0, nextBreak = 180, toastTimer;
 let holdTimer, holdPointer;
 try {
@@ -14,6 +18,7 @@ try {
   if (Object.hasOwn(names, saved.prey)) selected = saved.prey;
   if ([1, 2, 3].includes(saved.speed)) speed = saved.speed;
   if (['meadow', 'night'].includes(saved.scene)) sceneChoice = saved.scene;
+  if (['flat', 'runner'].includes(saved.stage)) stageChoice = saved.stage;
   $('sound').checked = saved.sound === true;
 } catch { /* Settings are optional when browser storage is unavailable. */ }
 
@@ -28,7 +33,7 @@ function fit(surface, hunt) {
   return rect;
 }
 const size = fit(preview);
-previewGame = new Hunt(size.width, size.height, { prey: selected, speed });
+previewGame = createHunt(size.width, size.height);
 const observer = new ResizeObserver(() => { fit(preview, previewGame); if (active) { fit(canvas, game); if (paused) scene(canvas, game); } });
 observer.observe(preview);
 window.addEventListener('resize', () => { if (active) { fit(canvas, game); if (paused) scene(canvas, game); } });
@@ -72,6 +77,11 @@ function scene(surface, hunt, isPreview = false) {
   const c = surface.getContext('2d');
   const w = hunt.width, h = hunt.height;
   c.clearRect(0, 0, w, h);
+  if (hunt.mode === 'runner') {
+    drawRunnerScene(c, hunt, { night: sceneChoice === 'night', drawPrey });
+    drawRipples(c, hunt);
+    return;
+  }
   if (!isPreview) {
     c.fillStyle = '#e7eadc'; c.fillRect(0, 0, w, h);
     const gradient = c.createRadialGradient(w * .5, h * .4, 0, w * .5, h * .4, h);
@@ -89,15 +99,24 @@ function scene(surface, hunt, isPreview = false) {
   if (!isPreview) for (const [x, y, rotate] of [[w * .1, h * .27, -.7], [w * .87, h * .76, .8], [w * .75, h * .14, 1.2]]) {
     ellipse(c, x, y, 30, 13, sceneChoice === 'night' ? '#365953' : '#bdc9a6', rotate); ellipse(c, x + 14, y + 14, 25, 11, sceneChoice === 'night' ? '#40665d' : '#c8d1b5', rotate + .6);
   }
+  drawRipples(c, hunt);
+  drawPrey(c, hunt);
+}
+function drawRipples(c, hunt) {
   for (const ripple of hunt.ripples) {
     c.globalAlpha = ripple.life / .7;
     c.strokeStyle = ripple.hit ? '#849d62' : '#aab794'; c.lineWidth = 1.5;
     c.beginPath(); c.arc(ripple.x, ripple.y, 10 + (1 - ripple.life / .7) * 46, 0, Math.PI * 2); c.stroke();
     if (ripple.hit) for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3; const r = 18 + (.7 - ripple.life) * 48; ellipse(c, ripple.x + Math.cos(a) * r, ripple.y + Math.sin(a) * r, 2, 2, '#a2b47e'); }
+    if (ripple.points) {
+      c.fillStyle = sceneChoice === 'night' ? '#fff0b5' : '#354e37';
+      c.font = '600 20px Georgia, serif'; c.textAlign = 'center';
+      c.fillText(`+${ripple.points}`, ripple.x, ripple.y - 25 - (0.7 - ripple.life) * 35);
+    }
     c.globalAlpha = 1;
   }
-  drawPrey(c, hunt);
 }
+
 function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`; }
 function frame(now) {
   const dt = Math.min(Math.max((now - last) / 1000, 0), .05); last = now;
@@ -106,6 +125,7 @@ function frame(now) {
     else if (!paused) {
       game.step(dt); elapsed += dt; scene(canvas, game);
       $('session-time').textContent = formatTime(elapsed);
+      if (game.mode === 'runner') $('pass-count').textContent = `${game.missed} 通過`;
       if (elapsed >= nextBreak) { nextBreak += 180; pause(true); }
     }
   }
@@ -114,6 +134,12 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 function refreshSettings() {
+  if ((previewGame.mode || 'flat') !== stageChoice) { const rect = preview.getBoundingClientRect(); previewGame = createHunt(rect.width, rect.height); }
+  document.querySelectorAll('[data-stage]').forEach(b => { const chosen = b.dataset.stage === stageChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
+  $('stage-caption').textContent = stageNames[stageChoice];
+  $('stage-note').textContent = stageChoice === 'runner' ? '奥から迫る獲物を、通り過ぎる前にタッチ。遠くでつかまえると高得点！' : '画面を走りまわる獲物を追いかけよう。急に止まったり、かくれたり。';
+  preview.parentElement.classList.toggle('runner-preview', stageChoice === 'runner');
+  $('preview-instruction').textContent = stageChoice === 'runner' ? '奥から、こっちへ！' : 'あ、うごいた。';
   previewGame.prey = selected; previewGame.speed = speed;
   document.querySelectorAll('.friend').forEach(b => { const chosen = b.dataset.prey === selected; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
   document.querySelectorAll('.scene-option').forEach(b => { const chosen = b.dataset.scene === sceneChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
@@ -121,12 +147,12 @@ function refreshSettings() {
   $('speed-label').textContent = speeds[speed - 1];
   $('friend-caption').textContent = names[selected];
   $('prey-tag').textContent = descriptions[selected];
-  $('scene-name').textContent = sceneChoice === 'night' ? '02 / 月あかりの庭' : '01 / こもれびの草原';
+  $('scene-name').textContent = `${stageChoice === 'runner' ? '02' : '01'} / ${stageNames[stageChoice]}`;
   preview.parentElement.classList.toggle('night-preview', sceneChoice === 'night');
   $('launch-prey').textContent = `${names[selected]}とあそぶ`;
-  $('launch-detail').textContent = `${sceneChoice === 'night' ? '夜の庭' : '草原'} · ${speeds[speed - 1]} · ${$('sound').checked ? '音あり' : '音なし'}`;
+  $('launch-detail').textContent = `${stageChoice === 'runner' ? '奥行き' : '平面'} · ${speeds[speed - 1]} · ${$('sound').checked ? '音あり' : '音なし'}`;
   $('sound-description').textContent = $('sound').checked ? 'そっと音をならす' : '静かにあそぶ';
-  try { localStorage.setItem('pawplay-preferences', JSON.stringify({ prey: selected, speed, scene: sceneChoice, sound: $('sound').checked })); } catch { /* Gameplay works without storage. */ }
+  try { localStorage.setItem('pawplay-preferences', JSON.stringify({ prey: selected, speed, scene: sceneChoice, stage: stageChoice, sound: $('sound').checked })); } catch { /* Gameplay works without storage. */ }
 }
 refreshSettings();
 // Render the same custom illustrations in the cards and in the game.
@@ -135,6 +161,7 @@ for (const thumbnail of document.querySelectorAll('[data-drawing]')) {
   c.scale(1.3, 1.3);
   drawPrey(c, { x: 57, y: 39, angle: -.3, scale: 1, time: 0, prey: thumbnail.dataset.drawing });
 }
+document.querySelectorAll('[data-stage]').forEach(button => button.addEventListener('click', () => { stageChoice = button.dataset.stage; refreshSettings(); }));
 document.querySelectorAll('.friend').forEach(button => button.addEventListener('click', () => { selected = button.dataset.prey; refreshSettings(); }));
 document.querySelectorAll('.scene-option').forEach(button => button.addEventListener('click', () => { sceneChoice = button.dataset.scene; refreshSettings(); }));
 $('speed').addEventListener('input', event => { speed = Number(event.target.value); refreshSettings(); });
@@ -174,22 +201,27 @@ $('start').addEventListener('click', () => {
   active = true; paused = false; elapsed = 0; nextBreak = 180; last = performance.now();
   play.classList.toggle('night-play', sceneChoice === 'night');
   $('pause-panel').hidden = true; $('pause').disabled = false; $('catch-count').textContent = '0 キャッチ'; $('session-time').textContent = '0:00';
-  const rect = fit(canvas); game = new Hunt(rect.width, rect.height, { prey: selected, speed });
-  scene(canvas, game); toast('獲物をタッチしてみよう', 3500);
+  const rect = fit(canvas); game = createHunt(rect.width, rect.height);
+  const runner = stageChoice === 'runner';
+  $('score-display').hidden = !runner; $('pass-count').hidden = !runner; $('pause-score-stat').hidden = !runner;
+  $('score-value').textContent = '0'; $('pass-count').textContent = '0 通過';
+  $('stage-badge').textContent = stageNames[stageChoice];
+  document.querySelector('.session-stats').classList.toggle('has-score', runner);
+  scene(canvas, game); toast(stageChoice === 'runner' ? '通り過ぎる前にタッチ！ 遠くでキャッチすると高得点' : '獲物をタッチしてみよう', 3500);
   document.body.style.overflow = 'hidden'; keepAwake(); $('pause').focus({ preventScroll: true });
 });
 canvas.addEventListener('pointerdown', event => {
   if (!active || paused || event.isPrimary === false) return;
   event.preventDefault();
   const rect = canvas.getBoundingClientRect();
-  if (game.tap(event.clientX - rect.left, event.clientY - rect.top)) { $('catch-count').textContent = `${game.catches} キャッチ`; chime(); }
+  if (game.tap(event.clientX - rect.left, event.clientY - rect.top)) { $('catch-count').textContent = `${game.catches} キャッチ`; if (game.mode === 'runner') $('score-value').textContent = game.score; chime(); }
 });
 function pause(isBreak = false) {
   if (!active || paused) return;
   cancelHold(); paused = true; releaseWakeLock(); clearTimeout(toastTimer); $('play-toast').classList.add('faded');
   $('pause-title').textContent = isBreak ? 'そろそろ、ひとやすみ。' : 'ひとやすみ。';
   $('pause-message').textContent = isBreak ? '3分あそびました。少し休んだり、本物のおもちゃでも遊んでみてね。' : 'また気になったら、つづきをどうぞ。';
-  $('pause-catches').textContent = game.catches; $('pause-time').textContent = formatTime(elapsed);
+  $('pause-catches').textContent = game.catches; $('pause-score').textContent = game.score || 0; $('pause-time').textContent = formatTime(elapsed);
   $('pause-panel').hidden = false; $('pause').disabled = true; $('resume').focus({ preventScroll: true });
 }
 function cancelHold() { clearTimeout(holdTimer); holdTimer = undefined; holdPointer = undefined; $('pause').classList.remove('holding'); }

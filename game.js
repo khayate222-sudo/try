@@ -1,5 +1,6 @@
 export class Hunt {
   constructor(width, height, { prey = 'mouse', speed = 2, random = Math.random } = {}) {
+    this.mode = 'flat';
     this.random = random;
     this.prey = prey;
     this.speed = speed;
@@ -44,8 +45,8 @@ export class Hunt {
         this.remaining = this.between(1.4, 3.5);
       } else {
         const n = this.random();
-        this.phase = n < 0.23 ? 'hidden' : n < 0.49 ? 'waiting' : 'moving';
-        this.remaining = this.phase === 'hidden' ? this.between(0.8, 2.2) : this.between(0.5, 2.8);
+        this.phase = n < 0.14 ? 'hidden' : n < 0.35 ? 'waiting' : 'moving';
+        this.remaining = this.phase === 'moving' ? this.between(0.9, 2.2) : this.between(0.3, 0.9);
         this.pickTarget();
       }
     }
@@ -54,8 +55,8 @@ export class Hunt {
       const dist = Math.hypot(dx, dy);
       if (dist < 10) this.pickTarget();
       else {
-        const base = this.prey === 'feather' ? 60 : this.prey === 'bug' ? 80 : 115;
-        const pace = base * (0.55 + this.speed * 0.3) * (0.75 + Math.sin(this.time * 3) * 0.25);
+        const base = this.prey === 'feather' ? 175 : this.prey === 'bug' ? 205 : 245;
+        const pace = base * [0.8, 1.35, 2.1][this.speed - 1] * (0.85 + Math.sin(this.time * 5) * 0.15);
         const step = Math.min(dist, pace * dt);
         this.x += dx / dist * step;
         this.y += dy / dist * step;
