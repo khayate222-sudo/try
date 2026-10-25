@@ -3,6 +3,7 @@ import { RunnerHunt } from './runner.js';
 import { drawRunnerScene } from './world.js';
 import { WallHunt, drawWallScene } from './wall.js';
 import { drawInsect, isInsect } from './insects.js';
+import { ManualHunt } from './manual.js';
 
 const $ = id => document.getElementById(id);
 const home = $('home'), play = $('play');
@@ -12,12 +13,13 @@ const descriptions = { mouse: 'ちょこちょこ、かくれんぼ', bug: 'す�
 const speeds = ['ゆったり', 'すばやく', '猛ダッシュ'];
 const stageNames = { flat: '平面の狩り場', runner: '奥行きダッシュ', wall: '壁のぼり' };
 function createHunt(width, height) {
+  if (controlChoice === 'manual') return new ManualHunt(width, height, { prey: selected, size: sizeChoice, stage: stageChoice });
   const Engine = stageChoice === 'wall' ? WallHunt : stageChoice === 'runner' ? RunnerHunt : Hunt;
   return new Engine(width, height, { prey: selected, speed, size: sizeChoice });
 }
-let selected = 'mouse', speed = 2, sceneChoice = 'meadow', stageChoice = 'flat', sizeChoice = 1, contrastChoice = true, active = false, paused = false;
+let selected = 'mouse', speed = 2, sceneChoice = 'meadow', stageChoice = 'flat', sizeChoice = 1, contrastChoice = true, controlChoice = 'auto', active = false, paused = false;
 let game, previewGame, audio, wakeLock, last = performance.now(), elapsed = 0, nextBreak = 180, toastTimer;
-let holdTimer, holdPointer;
+let holdTimer, holdPointer, dragPointer, previewPointer;
 try {
   const saved = JSON.parse(localStorage.getItem('pawplay-preferences') || '{}');
   if (Object.hasOwn(names, saved.prey)) selected = saved.prey;
@@ -26,6 +28,8 @@ try {
   if (['flat', 'runner', 'wall'].includes(saved.stage)) stageChoice = saved.stage;
   if ([.6, 1, 1.45].includes(saved.size)) sizeChoice = saved.size;
   if (typeof saved.contrast === 'boolean') contrastChoice = saved.contrast;
+  if (saved.control === 'manual') controlChoice = 'manual';
+  if (controlChoice === 'manual' && stageChoice === 'runner') stageChoice = 'flat';
   if (stageChoice === 'wall' && !isInsect(selected)) selected = 'spider';
   $('sound').checked = saved.sound === true;
 } catch { /* Settings are optional when browser storage is unavailable. */ }
@@ -132,7 +136,7 @@ function frame(now) {
     else if (!paused) {
       game.step(dt); elapsed += dt; scene(canvas, game);
       $('session-time').textContent = formatTime(elapsed);
-      if (game.mode !== 'flat') $('pass-count').textContent = `${game.missed} 通過`;
+      if (!game.manual && game.mode !== 'flat') $('pass-count').textContent = `${game.missed} 通過`;
       if (elapsed >= nextBreak) { nextBreak += 180; pause(true); }
     }
   }
@@ -141,12 +145,16 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 function refreshSettings() {
+  if (controlChoice === 'manual' && stageChoice === 'runner') stageChoice = 'flat';
+  home.classList.toggle('manual-selected', controlChoice === 'manual');
+  $('mirror-note').hidden = controlChoice !== 'manual';
+  document.querySelectorAll('[data-control]').forEach(b => { const chosen = b.dataset.control === controlChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
   if (stageChoice === 'wall' && !isInsect(selected)) selected = 'spider';
   home.classList.toggle('wall-selected', stageChoice === 'wall');
-  if ((previewGame.mode || 'flat') !== stageChoice) { const rect = preview.getBoundingClientRect(); previewGame = createHunt(rect.width, rect.height); }
-  document.querySelectorAll('[data-stage]').forEach(b => { const chosen = b.dataset.stage === stageChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
+  if ((previewGame.mode || 'flat') !== stageChoice || !!previewGame.manual !== (controlChoice === 'manual')) { const rect = preview.getBoundingClientRect(); previewGame = createHunt(rect.width, rect.height); }
+  document.querySelectorAll('[data-stage]').forEach(b => { const chosen = b.dataset.stage === stageChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); b.disabled = controlChoice === 'manual' && b.dataset.stage === 'runner'; });
   $('stage-caption').textContent = stageNames[stageChoice];
-  $('stage-note').textContent = stageChoice === 'runner' ? '奥から迫る獲物を、通り過ぎる前にタッチ。遠くでつかまえると高得点！' : stageChoice === 'wall' ? '蜘蛛や小さな虫が、壁を不規則にのぼる。近くを触ると、さっと逃げる。' : '急に走る、止まる、くるっと曲がる。小さな虫の気まぐれを追いかけよう。';
+  $('stage-note').textContent = controlChoice === 'manual' ? '画面をなぞって獲物を操作。平面・壁のステージで遊べます。奥行きダッシュは自動モードで。' : stageChoice === 'runner' ? '奥から迫る獲物を、通り過ぎる前にタッチ。遠くでつかまえると高得点！' : stageChoice === 'wall' ? '蜘蛛や小さな虫が、壁を不規則にのぼる。近くを触ると、さっと逃げる。' : '急に走る、止まる、くるっと曲がる。小さな虫の気まぐれを追いかけよう。';
   preview.parentElement.classList.toggle('wall-preview', stageChoice === 'wall');
   preview.parentElement.classList.toggle('runner-preview', stageChoice === 'runner');
   $('preview-instruction').textContent = stageChoice === 'runner' ? '奥から、こっちへ！' : 'あ、うごいた。';
@@ -154,13 +162,14 @@ function refreshSettings() {
   document.querySelectorAll('.friend').forEach(b => { const chosen = b.dataset.prey === selected; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); b.disabled = stageChoice === 'wall' && !isInsect(b.dataset.prey); });
   document.querySelectorAll('.scene-option').forEach(b => { const chosen = b.dataset.scene === sceneChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
   $('speed').value = speed; $('speed').setAttribute('aria-valuetext', speeds[speed - 1]);
-  $('speed-label').textContent = speeds[speed - 1];
+  $('speed-label').textContent = controlChoice === 'manual' ? '指で操作' : speeds[speed - 1];
+  $('speed').disabled = controlChoice === 'manual';
   $('friend-caption').textContent = names[selected];
   $('prey-tag').textContent = descriptions[selected];
   $('scene-name').textContent = `${{ flat: '01', runner: '02', wall: '03' }[stageChoice]} / ${stageNames[stageChoice]}`;
   preview.parentElement.classList.toggle('night-preview', sceneChoice === 'night');
   $('launch-prey').textContent = `${names[selected]}とあそぶ`;
-  $('launch-detail').textContent = `${stageChoice === 'runner' ? '奥行き' : stageChoice === 'wall' ? '壁のぼり' : '平面'} · ${speeds[speed - 1]} · ${$('sound').checked ? '音あり' : '音なし'}`;
+  $('launch-detail').textContent = `${stageChoice === 'runner' ? '奥行き' : stageChoice === 'wall' ? '壁のぼり' : '平面'} · ${controlChoice === 'manual' ? '指で操作' : speeds[speed - 1]} · ${$('sound').checked ? '音あり' : '音なし'}`;
   for (const b of document.querySelectorAll('[data-size]')) { const chosen = Number(b.dataset.size) === sizeChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); }
   for (const b of document.querySelectorAll('[data-contrast]')) { const chosen = (b.dataset.contrast === 'high') === contrastChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); }
   $('contrast-description').textContent = contrastChoice ? sceneChoice === 'night' ? '暗い背景に、淡い色の虫。小さくてもくっきり。' : '明るい背景に、黒い虫。小さくてもくっきり。' : '茶色の体で、背景に少しなじむ見え方。';
@@ -168,7 +177,7 @@ function refreshSettings() {
   document.querySelector('[data-scene=night] strong').textContent = stageChoice === 'wall' ? '暗い壁' : '月あかりの庭';
   renderThumbnails();
   $('sound-description').textContent = $('sound').checked ? 'そっと音をならす' : '静かにあそぶ';
-  try { localStorage.setItem('pawplay-preferences', JSON.stringify({ prey: selected, speed, scene: sceneChoice, stage: stageChoice, size: sizeChoice, contrast: contrastChoice, sound: $('sound').checked })); } catch { /* Gameplay works without storage. */ }
+  try { localStorage.setItem('pawplay-preferences', JSON.stringify({ prey: selected, speed, scene: sceneChoice, stage: stageChoice, size: sizeChoice, contrast: contrastChoice, control: controlChoice, sound: $('sound').checked })); } catch { /* Gameplay works without storage. */ }
 }
 refreshSettings();
 // Render the same custom illustrations in the cards and in the game.
@@ -179,6 +188,7 @@ function renderThumbnails() {
     drawPrey(c, { x: 57, y: 39, angle: -.3, scale: ['ant', 'gnat'].includes(thumbnail.dataset.drawing) ? 1.8 : 1, size: 1, thumbnail: true, time: 0, prey: thumbnail.dataset.drawing });
   }
 }
+document.querySelectorAll('[data-control]').forEach(b => b.addEventListener('click', () => { controlChoice = b.dataset.control; refreshSettings(); }));
 document.querySelectorAll('[data-size]').forEach(b => b.addEventListener('click', () => { sizeChoice = Number(b.dataset.size); refreshSettings(); }));
 document.querySelectorAll('[data-contrast]').forEach(b => b.addEventListener('click', () => { contrastChoice = b.dataset.contrast === 'high'; refreshSettings(); }));
 document.querySelectorAll('[data-stage]').forEach(button => button.addEventListener('click', () => { stageChoice = button.dataset.stage; refreshSettings(); }));
@@ -186,13 +196,19 @@ document.querySelectorAll('.friend').forEach(button => button.addEventListener('
 document.querySelectorAll('.scene-option').forEach(button => button.addEventListener('click', () => { sceneChoice = button.dataset.scene; refreshSettings(); }));
 $('speed').addEventListener('input', event => { speed = Number(event.target.value); refreshSettings(); });
 $('sound').addEventListener('change', refreshSettings);
+function pointFromEvent(surface, hunt, event) {
+  const rect = surface.getBoundingClientRect();
+  hunt.point((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+}
 preview.addEventListener('pointerdown', event => {
   if (active || event.isPrimary === false) return;
   event.preventDefault();
-  const rect = preview.getBoundingClientRect();
-  previewGame.tap(event.clientX - rect.left, event.clientY - rect.top);
+  if (previewGame.manual) { previewPointer = event.pointerId; preview.setPointerCapture(event.pointerId); pointFromEvent(preview, previewGame, event); }
+  else { const rect = preview.getBoundingClientRect(); previewGame.tap(event.clientX - rect.left, event.clientY - rect.top); }
   preview.parentElement.classList.add('touched');
 });
+preview.addEventListener('pointermove', event => { if (previewGame.manual && event.pointerId === previewPointer) pointFromEvent(preview, previewGame, event); });
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) preview.addEventListener(type, () => { previewPointer = undefined; });
 
 async function keepAwake() {
   try {
@@ -222,25 +238,42 @@ $('start').addEventListener('click', () => {
   play.classList.toggle('night-play', sceneChoice === 'night');
   $('pause-panel').hidden = true; $('pause').disabled = false; $('catch-count').textContent = '0 キャッチ'; $('session-time').textContent = '0:00';
   const rect = fit(canvas); game = createHunt(rect.width, rect.height);
-  const runner = stageChoice !== 'flat';
+  const runner = stageChoice !== 'flat' && !game.manual;
+  $('manual-tools').hidden = !game.manual; $('catch-count').hidden = !!game.manual;
+  $('hide-prey').setAttribute('aria-pressed', 'false'); $('hide-prey').textContent = 'かくす';
+  $('fullscreen').hidden = !game.manual || !document.documentElement.requestFullscreen;
+  dragPointer = undefined;
   $('score-display').hidden = !runner; $('pass-count').hidden = !runner; $('pause-score-stat').hidden = !runner;
   $('score-value').textContent = '0'; $('pass-count').textContent = '0 通過';
   $('stage-badge').textContent = stageNames[stageChoice];
   document.querySelector('.session-stats').classList.toggle('has-score', runner);
-  scene(canvas, game); toast(stageChoice === 'runner' ? '通り過ぎる前にタッチ！ 遠くでキャッチすると高得点' : '獲物をタッチしてみよう', 3500);
+  scene(canvas, game); toast(game.manual ? '指でなぞると獲物が動きます。指を離すとストップ' : stageChoice === 'runner' ? '通り過ぎる前にタッチ！ 遠くでキャッチすると高得点' : '獲物をタッチしてみよう', 3500);
   document.body.style.overflow = 'hidden'; keepAwake(); $('pause').focus({ preventScroll: true });
 });
 canvas.addEventListener('pointerdown', event => {
   if (!active || paused || event.isPrimary === false) return;
   event.preventDefault();
+  if (game.manual) { dragPointer = event.pointerId; canvas.setPointerCapture(event.pointerId); pointFromEvent(canvas, game, event); return; }
   const rect = canvas.getBoundingClientRect();
   if (game.tap(event.clientX - rect.left, event.clientY - rect.top)) { $('catch-count').textContent = `${game.catches} キャッチ`; if (game.mode !== 'flat') $('score-value').textContent = game.score; chime(); }
 });
+canvas.addEventListener('pointermove', event => { if (active && !paused && game.manual && event.pointerId === dragPointer) { event.preventDefault(); pointFromEvent(canvas, game, event); } });
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(type, () => { dragPointer = undefined; });
+$('hide-prey').addEventListener('click', () => {
+  if (!active || paused || !game.manual) return;
+  game.hide(game.visible); $('hide-prey').setAttribute('aria-pressed', String(!game.visible)); $('hide-prey').textContent = game.visible ? 'かくす' : '出す';
+});
+$('fullscreen').addEventListener('click', async () => {
+  try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen(); else await document.exitFullscreen(); }
+  catch { toast('このブラウザでは全画面に切り替えられません'); }
+});
 function pause(isBreak = false) {
   if (!active || paused) return;
-  cancelHold(); paused = true; releaseWakeLock(); clearTimeout(toastTimer); $('play-toast').classList.add('faded');
+  dragPointer = undefined; cancelHold(); paused = true; releaseWakeLock(); clearTimeout(toastTimer); $('play-toast').classList.add('faded');
   $('pause-title').textContent = isBreak ? 'そろそろ、ひとやすみ。' : 'ひとやすみ。';
   $('pause-message').textContent = isBreak ? '3分あそびました。少し休んだり、本物のおもちゃでも遊んでみてね。' : 'また気になったら、つづきをどうぞ。';
+  $('pause-catches').parentElement.hidden = !!game.manual;
+  document.querySelector('.session-stats').classList.toggle('manual-stats', !!game.manual);
   $('pause-catches').textContent = game.catches; $('pause-score').textContent = game.score || 0; $('pause-time').textContent = formatTime(elapsed);
   $('pause-panel').hidden = false; $('pause').disabled = true; $('resume').focus({ preventScroll: true });
 }
@@ -258,9 +291,12 @@ $('pause').addEventListener('contextmenu', event => event.preventDefault());
 $('pause').addEventListener('click', event => { if (event.detail === 0 && !event.pointerType) pause(); });
 $('resume').addEventListener('click', () => { paused = false; $('pause-panel').hidden = true; $('pause').disabled = false; last = performance.now(); keepAwake(); $('pause').focus({ preventScroll: true }); });
 $('exit').addEventListener('click', () => {
-  cancelHold(); active = false; paused = false; releaseWakeLock(); play.hidden = true; $('pause-panel').hidden = true; $('pause').disabled = false;
+  dragPointer = undefined; cancelHold(); active = false; paused = false; releaseWakeLock(); play.hidden = true; $('pause-panel').hidden = true; $('pause').disabled = false;
   home.hidden = false; document.querySelector('.brand').hidden = false; document.body.style.overflow = ''; fit(preview, previewGame); $('start').focus({ preventScroll: true });
 });
+$('mirror-help').addEventListener('click', () => $('mirror-dialog').showModal());
+$('mirror-close').addEventListener('click', () => $('mirror-dialog').close());
+$('mirror-done').addEventListener('click', () => $('mirror-dialog').close());
 $('help-open').addEventListener('click', () => $('help-dialog').showModal());
 $('help-close').addEventListener('click', () => $('help-dialog').close());
 $('help-done').addEventListener('click', () => $('help-dialog').close());
