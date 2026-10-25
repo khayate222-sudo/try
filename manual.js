@@ -1,3 +1,5 @@
+import { StringTail } from './string.js';
+
 // Direct manipulation for screen mirroring: the phone and TV show the same
 // playground. No camera, pairing server, or remote-device discovery is needed.
 export class ManualHunt {
@@ -9,6 +11,7 @@ export class ManualHunt {
     this.angle = 0; this.scale = 1; this.stride = 0; this.time = 0;
     this.visible = true; this.catches = 0; this.score = 0; this.missed = 0;
     this.ripples = [];
+    if (prey === 'string') this.stringTail = new StringTail(this.x, this.y, size);
   }
   point(u, v) {
     if (!Number.isFinite(u) || !Number.isFinite(v)) return;
@@ -18,10 +21,10 @@ export class ManualHunt {
   tap(x, y) { this.point(x / this.width, y / this.height); return false; }
   resize(width, height) {
     this.x *= width / this.width; this.y *= height / this.height;
-    this.width = width; this.height = height;
+    this.width = width; this.height = height; this.stringTail?.reset(this.x, this.y);
   }
   get targets() { return this.scale > .01 ? [this] : []; }
-  project() { return { x: this.x, y: this.y, angle: this.angle, scale: this.scale, size: this.size, stride: this.stride }; }
+  project() { return { x: this.x, y: this.y, angle: this.angle, scale: this.scale, size: this.size, stride: this.stride, stringTail: this.stringTail }; }
   step(dt) {
     dt = Math.min(Math.max(dt, 0), .05); this.time += dt;
     const marginX = Math.min(25, this.width * .1), marginY = Math.min(75, this.height * .15);
@@ -36,6 +39,7 @@ export class ManualHunt {
       const heading = Math.atan2(dy, dx);
       this.angle += Math.atan2(Math.sin(heading - this.angle), Math.cos(heading - this.angle)) * (1 - Math.exp(-20 * dt));
     }
+    if (this.prey === 'string') { this.stringTail ||= new StringTail(this.x, this.y, this.size); this.stringTail.step(this.x, this.y, dt, this.size); }
     this.scale += ((this.visible ? 1 : 0) - this.scale) * (1 - Math.exp(-18 * dt));
   }
 }

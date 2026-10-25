@@ -1,3 +1,4 @@
+import { StringTail } from './string.js';
 import { OrganicMotion, isInsect, insectRadius } from './insects.js';
 
 // A perspective camera moving forward. World depth decreases toward the viewer.
@@ -23,9 +24,11 @@ export class RunnerHunt {
   between(a, b) { return a + this.random() * (b - a); }
   spawn(z = 15) {
     if (this.targets.length >= 6) return;
-    this.targets.push({ z, lateral: this.between(-.2, .2), vertical: this.between(.1, .6), motion: new OrganicMotion({ prey: this.prey, random: this.random }), phase: this.between(0, Math.PI * 2), sway: this.between(1.1, 2), bias: this.between(-0.2, 0.2), lift: this.between(-0.2, 0.2) });
+    const target = { z, lateral: this.between(-.2, .2), vertical: this.between(.1, .6), motion: new OrganicMotion({ prey: this.prey, random: this.random }), phase: this.between(0, Math.PI * 2), sway: this.between(1.1, 2), bias: this.between(-0.2, 0.2), lift: this.between(-0.2, 0.2) };
+    if (this.prey === 'string') { const p = this.project(target); target.stringTail = new StringTail(p.x, p.y, this.size * p.scale); }
+    this.targets.push(target);
   }
-  resize(width, height) { this.width = width; this.height = height; }
+  resize(width, height) { this.width = width; this.height = height; for (const t of this.targets) t.stringTail = undefined; }
   project(target) {
     const depth = target.z + 0.6;
     const lateral = isInsect(this.prey) ? target.lateral : target.bias + Math.sin(this.time * target.sway + target.phase) * 0.55;
@@ -35,7 +38,7 @@ export class RunnerHunt {
       x: this.width * (0.5 + lateral * 0.8 / depth),
       y: this.height * (0.36 + vertical * 0.65 / depth),
       scale,
-      size: this.size, stride: target.motion.distance * 160,
+      stringOpacity: 1, stringTail: target.stringTail, size: this.size, stride: target.motion.distance * 160,
       radius: isInsect(this.prey) ? insectRadius(this.prey, this.size, scale) : Math.max(18, 27 * scale * this.size),
       angle: (isInsect(this.prey) ? Math.sin(target.motion.angle) * .6 : Math.sin(this.time * target.sway + target.phase) * .45) + Math.PI / 2,
     };
@@ -53,6 +56,11 @@ export class RunnerHunt {
         target.lateral = p.x; target.vertical = p.y;
       }
     }
+    if (this.prey === 'string') for (const target of this.targets) {
+      if (target.z < .9) continue;
+      const p = this.project(target); target.stringTail ||= new StringTail(p.x, p.y, this.size * p.scale);
+      target.stringTail.step(p.x, p.y, dt, this.size * p.scale);
+    }
     this.targets = this.targets.filter(target => {
       if (target.z < 0.9) { this.missed++; return false; }
       return true;
@@ -65,7 +73,7 @@ export class RunnerHunt {
     // Test nearest first so a foreground target shields a target behind it.
     const target = [...this.targets].sort((a, b) => a.z - b.z).find(t => {
       const p = this.project(t);
-      return t.z >= 0.9 && Math.hypot(x - p.x, y - p.y) <= p.radius;
+      return t.z >= 0.9 && (this.prey === 'string' && t.stringTail ? t.stringTail.hit(x, y, Math.max(12, p.scale * 12)) : Math.hypot(x - p.x, y - p.y) <= p.radius);
     });
     let points = 0;
     if (target) {

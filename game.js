@@ -1,3 +1,4 @@
+import { StringTail } from './string.js';
 import { OrganicMotion, isInsect, insectRadius } from './insects.js';
 
 export class Hunt {
@@ -20,6 +21,7 @@ export class Hunt {
     this.scale = 1;
     this.ripples = [];
     this.pickTarget();
+    if (prey === 'string') this.stringTail = new StringTail(this.x, this.y, size);
   }
   between(min, max) { return min + this.random() * (max - min); }
   bounds() { return { x: Math.min(48, this.width / 4), y: Math.min(90, this.height / 4) }; }
@@ -33,6 +35,7 @@ export class Hunt {
     this.y *= height / this.height;
     this.width = width;
     this.height = height;
+    this.stringTail?.reset(this.x, this.y);
     this.pickTarget();
   }
   step(dt) {
@@ -65,7 +68,7 @@ export class Hunt {
       const dist = Math.hypot(dx, dy);
       if (dist < 10) this.pickTarget();
       else {
-        const base = this.prey === 'feather' ? 175 : this.prey === 'bug' ? 205 : 245;
+        const base = this.prey === 'string' ? 155 : this.prey === 'feather' ? 175 : this.prey === 'bug' ? 205 : 245;
         const pace = base * [0.8, 1.35, 2.1][this.speed - 1] * (0.85 + Math.sin(this.time * 5) * 0.15);
         const step = Math.min(dist, pace * dt);
         this.x += dx / dist * step;
@@ -74,12 +77,13 @@ export class Hunt {
         this.angle += Math.atan2(Math.sin(heading - this.angle), Math.cos(heading - this.angle)) * Math.min(1, dt * 9);
       }
     }
+    if (this.prey === 'string') { this.stringTail ||= new StringTail(this.x, this.y, this.size); this.stringTail.step(this.x, this.y, dt, this.size); }
     const visible = this.phase === 'hidden' || this.phase === 'caught' ? 0 : 1;
     this.scale += (visible - this.scale) * Math.min(1, dt * 9);
     this.ripples = this.ripples.map(r => ({ ...r, life: r.life - dt })).filter(r => r.life > 0);
   }
   tap(x, y) {
-    const hit = this.phase !== 'hidden' && this.phase !== 'caught' && this.scale > 0.5 && Math.hypot(x - this.x, y - this.y) < (isInsect(this.prey) ? insectRadius(this.prey, this.size) : 45 * this.size);
+    const hit = this.phase !== 'hidden' && this.phase !== 'caught' && this.scale > 0.5 && (this.prey === 'string' && this.stringTail ? this.stringTail.hit(x, y) : Math.hypot(x - this.x, y - this.y) < (isInsect(this.prey) ? insectRadius(this.prey, this.size) : 45 * this.size));
     this.ripples.push({ x, y, life: 0.7, hit });
     if (hit) {
       this.catches++;

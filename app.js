@@ -4,13 +4,15 @@ import { drawRunnerScene } from './world.js';
 import { WallHunt, drawWallScene } from './wall.js';
 import { drawInsect, isInsect } from './insects.js';
 import { ManualHunt } from './manual.js';
+import { drawString } from './string.js';
 
 const $ = id => document.getElementById(id);
 const home = $('home'), play = $('play');
 const preview = $('preview-canvas'), canvas = $('game-canvas');
-const names = { mouse: 'ねずみ', bug: 'てんとうむし', feather: 'はね', ant: '小さなアリ', gnat: '小バエ', spider: '蜘蛛' };
-const descriptions = { mouse: 'ちょこちょこ、かくれんぼ', bug: 'すいすい、きまぐれに', feather: 'ゆらゆら、ひらひら', ant: 'ちょろちょろ、急に方向転換', gnat: '小さく、すばしっこく', spider: '8本の脚で、すたすた' };
+const names = { mouse: 'ねずみ', bug: 'てんとうむし', feather: 'はね', ant: '小さなアリ', gnat: '小バエ', spider: '蜘蛛', string: 'ひらひら紐' };
+const descriptions = { mouse: 'ちょこちょこ、かくれんぼ', bug: 'すいすい、きまぐれに', feather: 'ゆらゆら、ひらひら', ant: 'ちょろちょろ、急に方向転換', gnat: '小さく、すばしっこく', spider: '8本の脚で、すたすた', string: 'ふわり、くねくね、ひらひら' };
 const speeds = ['ゆったり', 'すばやく', '猛ダッシュ'];
+const canUseOnWall = prey => isInsect(prey) || prey === 'string';
 const stageNames = { flat: '平面の狩り場', runner: '奥行きダッシュ', wall: '壁のぼり' };
 function createHunt(width, height) {
   if (controlChoice === 'manual') return new ManualHunt(width, height, { prey: selected, size: sizeChoice, stage: stageChoice });
@@ -30,7 +32,7 @@ try {
   if (typeof saved.contrast === 'boolean') contrastChoice = saved.contrast;
   if (saved.control === 'manual') controlChoice = 'manual';
   if (controlChoice === 'manual' && stageChoice === 'runner') stageChoice = 'flat';
-  if (stageChoice === 'wall' && !isInsect(selected)) selected = 'spider';
+  if (stageChoice === 'wall' && !canUseOnWall(selected)) selected = 'spider';
   $('sound').checked = saved.sound === true;
 } catch { /* Settings are optional when browser storage is unavailable. */ }
 
@@ -56,6 +58,10 @@ function ellipse(c, x, y, rx, ry, color, rotation = 0) {
 function drawPrey(c, hunt) {
   c.save();
   c.translate(hunt.x, hunt.y);
+  if (hunt.prey === 'string') {
+    if (!hunt.stringTail) c.scale(hunt.scale, hunt.scale);
+    drawString(c, hunt, { night: !hunt.thumbnail && sceneChoice === 'night' }); c.restore(); return;
+  }
   c.rotate(hunt.angle);
   c.scale(hunt.scale * (hunt.size ?? sizeChoice), hunt.scale * (hunt.size ?? sizeChoice));
   if (isInsect(hunt.prey)) {
@@ -149,7 +155,7 @@ function refreshSettings() {
   home.classList.toggle('manual-selected', controlChoice === 'manual');
   $('mirror-note').hidden = controlChoice !== 'manual';
   document.querySelectorAll('[data-control]').forEach(b => { const chosen = b.dataset.control === controlChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
-  if (stageChoice === 'wall' && !isInsect(selected)) selected = 'spider';
+  if (stageChoice === 'wall' && !canUseOnWall(selected)) selected = 'spider';
   home.classList.toggle('wall-selected', stageChoice === 'wall');
   if ((previewGame.mode || 'flat') !== stageChoice || !!previewGame.manual !== (controlChoice === 'manual')) { const rect = preview.getBoundingClientRect(); previewGame = createHunt(rect.width, rect.height); }
   document.querySelectorAll('[data-stage]').forEach(b => { const chosen = b.dataset.stage === stageChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); b.disabled = controlChoice === 'manual' && b.dataset.stage === 'runner'; });
@@ -159,7 +165,7 @@ function refreshSettings() {
   preview.parentElement.classList.toggle('runner-preview', stageChoice === 'runner');
   $('preview-instruction').textContent = stageChoice === 'runner' ? '奥から、こっちへ！' : 'あ、うごいた。';
   previewGame.prey = selected; previewGame.speed = speed; previewGame.size = sizeChoice;
-  document.querySelectorAll('.friend').forEach(b => { const chosen = b.dataset.prey === selected; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); b.disabled = stageChoice === 'wall' && !isInsect(b.dataset.prey); });
+  document.querySelectorAll('.friend').forEach(b => { const chosen = b.dataset.prey === selected; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); b.disabled = stageChoice === 'wall' && !canUseOnWall(b.dataset.prey); });
   document.querySelectorAll('.scene-option').forEach(b => { const chosen = b.dataset.scene === sceneChoice; b.classList.toggle('selected', chosen); b.setAttribute('aria-pressed', String(chosen)); });
   $('speed').value = speed; $('speed').setAttribute('aria-valuetext', speeds[speed - 1]);
   $('speed-label').textContent = controlChoice === 'manual' ? '指で操作' : speeds[speed - 1];
@@ -185,7 +191,7 @@ function renderThumbnails() {
   for (const thumbnail of document.querySelectorAll('[data-drawing]')) {
     const c = thumbnail.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, thumbnail.width, thumbnail.height);
     c.scale(1.3, 1.3);
-    drawPrey(c, { x: 57, y: 39, angle: -.3, scale: ['ant', 'gnat'].includes(thumbnail.dataset.drawing) ? 1.8 : 1, size: 1, thumbnail: true, time: 0, prey: thumbnail.dataset.drawing });
+    drawPrey(c, { x: 57, y: 39, angle: -.3, scale: thumbnail.dataset.drawing === 'string' ? .55 : ['ant', 'gnat'].includes(thumbnail.dataset.drawing) ? 1.8 : 1, size: 1, thumbnail: true, time: 0, prey: thumbnail.dataset.drawing });
   }
 }
 document.querySelectorAll('[data-control]').forEach(b => b.addEventListener('click', () => { controlChoice = b.dataset.control; refreshSettings(); }));
